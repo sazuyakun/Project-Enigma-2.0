@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Clock, MapPin, Mail, Shield, User, Activity, Search } from 'lucide-react';
+import { AlertTriangle, Clock, MapPin, Mail, Shield, User, Activity, Search, fingerprint } from 'lucide-react';
 import { format } from 'date-fns';
 
 // Default values for missing data
@@ -21,6 +21,57 @@ const UserBehaviorReport = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [flaggedWords, setFlaggedWords] = useState({ words: [], total: 0 });
+  const [confidenceScore, setConfidenceScore] = useState()
+  const [detectedAt, setDetectedAt] = useState()
+  const [isVPN, setIsVPN] = useState()
+
+  // Fetch risk score for a specific user
+  const fetchRiskScore = async (userId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:8080/profile-score/${userId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.profile_score;
+    } catch (error) {
+      console.error(`Error fetching risk score for user ${userId}:`, error);
+      return null;
+    }
+  };
+
+  // Fetch flagged words for a specific user
+  const fetchFlaggedWords = async (userId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:8080/flaggedWords/${userId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      return {
+        words: data.flagged_words.map(word => ({
+          word,
+          count: Math.floor(Math.random() * 100) // Simulated count since it's not in the API
+        })),
+        total: data.total_coded + data.total_positives
+      };
+    } catch (error) {
+      console.error(`Error fetching flagged words for user ${userId}:`, error);
+      return { words: [], total: 0 };
+    }
+  };
+  
+  const fetchVPNDetails = async (userId) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8080/vpn/${userId}`);
+      if(!res.ok) throw new Error(`${res.status}`)
+      const data = await res.json();
+      return data
+    } catch (e) {
+      console.log(e)
+    }
+  }
 
   useEffect(() => {
     const fetchData = async () => {
@@ -32,30 +83,40 @@ const UserBehaviorReport = () => {
         }
         const data = await response.json();
 
-        // Process and normalize the data
-        const updatedData = data.map(account => ({
-          id: account.id || "N/A",
-          username: account.username || "Unknown",
-          riskScore: typeof account.riskScore === 'number' ? account.riskScore : 0,
-          lastActive: account.lastActive ? new Date(account.lastActive) : new Date(),
-          location: account.location || "Unknown",
-          details: [{
+        // Fetch risk scores for all users
+        const updatedData = await Promise.all(data.map(async account => {
+          const riskScore = await fetchRiskScore(account.id);
+          const data = await fetchVPNDetails(account.id);
+
+          setIsVPN(data?.isVPN);
+          setConfidenceScore(data?.confidenceScore);
+          setDetectedAt(data?.detectedAt);
+
+          return {
             id: account.id || "N/A",
-            name: account.name || DEFAULT_VALUES.dummyName,
-            email: account.email || "unknown@example.com",
-          }],
-          behaviors: Array.isArray(account.behaviors) && account.behaviors.length > 0 
-            ? account.behaviors 
-            : DEFAULT_VALUES.dummyBehaviors,
-          riskFactors: Array.isArray(account.riskFactors) && account.riskFactors.length > 0 
-            ? account.riskFactors 
-            : DEFAULT_VALUES.dummyRiskFactors,
+            username: account.username || "Unknown",
+            riskScore: riskScore !== null ? riskScore : 0,
+            lastActive: account.lastActive ? new Date(account.lastActive) : new Date(),
+            location: account.location || "Unknown",
+            details: [{
+              id: account.id || "N/A",
+              name: account.name || DEFAULT_VALUES.dummyName,
+              email: account.email || "unknown@example.com",
+            }],
+            behaviors: Array.isArray(account.behaviors) && account.behaviors.length > 0 
+              ? account.behaviors 
+              : DEFAULT_VALUES.dummyBehaviors,
+            riskFactors: Array.isArray(account.riskFactors) && account.riskFactors.length > 0 
+              ? account.riskFactors 
+              : DEFAULT_VALUES.dummyRiskFactors,
+          };
         }));
 
         setAccountsData(updatedData);
-        // Only set selected account if there's data and none is currently selected
         if (updatedData.length > 0 && !selectedAccount) {
           setSelectedAccount(updatedData[0]);
+          const flaggedWordsData = await fetchFlaggedWords(updatedData[0].id);
+          setFlaggedWords(flaggedWordsData);
         }
       } catch (error) {
         console.error("Error fetching accounts data:", error);
@@ -67,6 +128,12 @@ const UserBehaviorReport = () => {
 
     fetchData();
   }, []); // Empty dependency array since we only want to fetch once on mount
+
+  useEffect(() => {
+    if (selectedAccount) {
+      fetchFlaggedWords(selectedAccount.id).then(setFlaggedWords);
+    }
+  }, [selectedAccount]);
 
   // Filter and sort accounts
   const filteredAccounts = accountsData
@@ -93,6 +160,25 @@ const UserBehaviorReport = () => {
     );
   }
 
+  const getAlertContent = (riskScore) => {
+    if (riskScore >= 50) {
+      return {
+        bgColor: "bg-red-500/10",
+        borderColor: "border-red-500/20",
+        textColor: "text-red-500",
+        title: "High-Risk Account Detected",
+        message: "This account has been flagged for suspicious activities and requires immediate attention."
+      };
+    } else {
+      return {
+        bgColor: "bg-yellow-500/10",
+        borderColor: "border-yellow-500/20",
+        textColor: "text-yellow-500",
+        title: "Suspicious Account Activity",
+        message: "This account has shown some unusual patterns that may require monitoring."
+      };
+    }
+  };
   return (
     <div className="space-y-6">
       {/* Search and Account List */}
@@ -153,11 +239,13 @@ const UserBehaviorReport = () => {
             className="space-y-6"
           >
             {/* Header Section */}
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-6 flex items-start space-x-4">
-              <AlertTriangle className="w-6 h-6 text-red-500 flex-shrink-0 mt-1" />
+            <div className={`${getAlertContent(selectedAccount.riskScore).bgColor} border ${getAlertContent(selectedAccount.riskScore).borderColor} rounded-lg p-6 flex items-start space-x-4`}>
+              <AlertTriangle className={`w-6 h-6 ${getAlertContent(selectedAccount.riskScore).textColor} flex-shrink-0 mt-1`} />
               <div>
-                <h2 className="text-xl font-semibold text-red-500">High-Risk Account Detected</h2>
-                <p className="text-gray-300 mt-1">This account has been flagged for suspicious activities related to drug trafficking.</p>
+                <h2 className={`text-xl font-semibold ${getAlertContent(selectedAccount.riskScore).textColor}`}>
+                  {getAlertContent(selectedAccount.riskScore).title}
+                </h2>
+                <p className="text-gray-300 mt-1">{getAlertContent(selectedAccount.riskScore).message}</p>
               </div>
             </div>
 
@@ -260,52 +348,96 @@ const UserBehaviorReport = () => {
 
             {/* Risk Analysis */}
             <div className="grid gap-6 md:grid-cols-2">
-              {/* Suspicious Behaviors */}
-              <motion.div
-                initial={{ x: -20, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                transition={{ delay: 0.6 }}
-                className="bg-gray-800 rounded-lg p-6 border border-gray-700"
-              >
-                <h3 className="text-lg font-semibold mb-4 flex items-center">
-                  <Activity className="w-5 h-5 mr-2 text-emerald-400" />
-                  Suspicious Behaviors
-                </h3>
-                <ul className="space-y-3">
-                  {selectedAccount.behaviors.map((behavior, index) => (
-                    <li key={index} className="flex items-start space-x-2">
-                      <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-1" />
-                      <span>{behavior}</span>
-                    </li>
-                  ))}
-                </ul>
-              </motion.div>
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.65 }}
+              className={`bg-gray-800 rounded-lg p-6 border ${
+                isVPN ? 'border-red-500' : 'border-emerald-400'
+              }`}
+            >
+              <h3 className="text-lg font-semibold mb-4 flex items-center">
+                <Shield className={`w-5 h-5 mr-2 ${isVPN ? 'text-red-400' : 'text-emerald-400'}`} />
+                VPN Detection Analysis
+              </h3>
+              <div className="space-y-6">
+                <div
+                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                    isVPN ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'
+                  }`}
+                >
+                  <div className="flex items-center space-x-3">
+                    <div
+                      className={`h-3 w-3 rounded-full animate-pulse ${
+                        isVPN ? 'bg-red-500' : 'bg-emerald-400'
+                      }`}
+                    />
+                    <span
+                      className={`font-medium ${isVPN ? 'text-red-400' : 'text-emerald-400'}`}
+                    >
+                      VPN Detected: {isVPN ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <span className="text-sm text-gray-400">Last checked: {detectedAt}</span>
+                </div>
 
-              {/* Risk Factor Breakdown */}
+                <div className="relative pt-4">
+                  <div className="flex justify-between mb-2">
+                    <span className="text-sm text-gray-400">VPN Confidence Score</span>
+                    <span className="text-sm font-medium text-emerald-400">
+                      {confidenceScore}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-3">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${confidenceScore}%` }}
+                      transition={{ delay: 0.7, duration: 0.5 }}
+                      className={`${
+                        isVPN ? 'bg-red-500' : 'bg-emerald-400'
+                      } h-3 rounded-full relative`}
+                    >
+                      <div className="absolute -right-1 -top-1 h-5 w-5 rounded-full shadow-lg" />
+                    </motion.div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+
+              {/* Flagged Words Analysis */}
               <motion.div
                 initial={{ x: 20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: 0.7 }}
                 className="bg-gray-800 rounded-lg p-6 border border-gray-700"
               >
-                <h3 className="text-lg font-semibold mb-4">Risk Factor Breakdown</h3>
+                <h3 className="text-lg font-semibold mb-4">Flagged Words Analysis</h3>
                 <div className="space-y-4">
-                  {selectedAccount.riskFactors.map((factor, index) => (
+                  {flaggedWords.words.map((item, index) => (
                     <div key={index}>
                       <div className="flex justify-between mb-1">
-                        <span className="text-sm text-gray-400">{factor.factor}</span>
-                        <span className="text-sm font-medium">{factor.score}%</span>
+                        <span className="text-sm text-gray-400">{item.word}</span>
+                        <span className="text-sm font-medium"></span>
                       </div>
-                      <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div className="w-full bg-gray-700 rounded-full h-2 relative">
                         <motion.div
                           initial={{ width: 0 }}
-                          animate={{ width: `${factor.score}%` }}
+                          animate={{ width: `${100}%` }}
                           transition={{ delay: 0.8 + index * 0.1, duration: 0.5 }}
-                          className="bg-emerald-400 h-2 rounded-full"
+                          className="bg-red-400 h-2 rounded-full"
                         />
+                        {/* Display count on top of the progress bar */}
+                        <span className="absolute right-0 -top-4 text-xs text-gray-400">
+                        </span>
                       </div>
                     </div>
                   ))}
+                  <div className="mt-4 pt-4 border-t border-gray-700">
+                    <p className="text-sm text-gray-400">
+                      Total Messages Analyzed: {flaggedWords.total}
+                    </p>
+                  </div>
                 </div>
               </motion.div>
             </div>

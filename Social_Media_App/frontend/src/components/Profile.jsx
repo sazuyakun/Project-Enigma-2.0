@@ -70,6 +70,9 @@ const Profile = () => {
     }
   };
 
+  console.log(userProfile?.posts.length);
+  
+
   return (
     <motion.div 
       initial="hidden"
@@ -151,6 +154,9 @@ const Profile = () => {
                 variants={itemVariants}
                 className="flex items-center gap-8"
               >
+
+
+
                 {[
                   { label: "posts", count: userProfile?.posts.length },
                   { label: "followers", count: userProfile?.followers.length },

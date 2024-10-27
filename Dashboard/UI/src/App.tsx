@@ -52,33 +52,38 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {!showReports ? (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-6">
-              <DashboardCard title="Heat Map">
+          <div className="space-y-6">
+            {/* Top row with two columns */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Heat Map */}
+              <DashboardCard title="">
                 <HeatMap />
               </DashboardCard>
-              <DashboardCard title="Network Graph">
-                <NetworkGraph />
-              </DashboardCard>
+
+              {/* Right column with stacked cards */}
+              <div className="space-y-6">
+                <DashboardCard title="Suspicious Activities">
+                  <div className="flex items-center mb-4 text-emerald-400">
+                    <Activity className="w-5 h-5 mr-2" />
+                    <span className="font-medium">Real-time Monitoring</span>
+                  </div>
+                  <ActivityGraph data={activityData} />
+                </DashboardCard>
+
+                <DashboardCard title="Keyword Monitoring">
+                  <div className="flex items-center mb-4 text-emerald-400">
+                    <TrendingUp className="w-5 h-5 mr-2" />
+                    <span className="font-medium">Trending Keywords</span>
+                  </div>
+                  <KeywordMonitor keywords={keywordData} />
+                </DashboardCard>
+              </div>
             </div>
 
-            <div className="space-y-6">
-              <DashboardCard title="Suspicious Activities">
-                <div className="flex items-center mb-4 text-emerald-400">
-                  <Activity className="w-5 h-5 mr-2" />
-                  <span className="font-medium">Real-time Monitoring</span>
-                </div>
-                <ActivityGraph data={activityData} />
-              </DashboardCard>
-
-              <DashboardCard title="Keyword Monitoring">
-                <div className="flex items-center mb-4 text-emerald-400">
-                  <TrendingUp className="w-5 h-5 mr-2" />
-                  <span className="font-medium">Trending Keywords</span>
-                </div>
-                <KeywordMonitor keywords={keywordData} />
-              </DashboardCard>
-            </div>
+            {/* Full-width Network Graph */}
+            <DashboardCard title="Network Graph" className="w-full">
+              <NetworkGraph />
+            </DashboardCard>
           </div>
         ) : (
           <UserBehaviorReport />

@@ -1,35 +1,26 @@
 import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog";
-import { Bookmark, MessageCircle, MoreHorizontal, Send, Share2 } from "lucide-react";
-import { Button } from "./ui/button";
+import { motion } from "framer-motion";
+import { Bookmark, MessageCircle, Share2 } from "lucide-react";
 import { FaHeart, FaRegHeart } from "react-icons/fa";
-import CommentDialog from "./CommentDialog";
 import { useDispatch, useSelector } from "react-redux";
 import axios from "axios";
 import { toast } from "sonner";
 import { setPosts, setSelectedPost } from "@/redux/postSlice";
-import { Badge } from "./ui/badge";
-import { format, isValid } from "date-fns";
+import CommentDialog from "./CommentDialog";
+import PostHeader from "./PostHeader";
+import PostMedia from "./PostMedia";
 
 const Post = ({ post, index }) => {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isMediaZoomed, setIsMediaZoomed] = useState(false);
   const { user } = useSelector((store) => store.auth);
   const { posts } = useSelector((store) => store.post);
-  // Add null check for post.likes
   const [liked, setLiked] = useState(post?.likes?.includes(user?._id) || false);
   const [postLike, setPostLike] = useState(post?.likes?.length || 0);
   const [comment, setComment] = useState(post?.comments || []);
-  const [isMediaZoomed, setIsMediaZoomed] = useState(false);
   const dispatch = useDispatch();
-
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return isValid(date) ? format(date, "MMM d, yyyy") : "Date unavailable";
-  };
 
   const postVariants = {
     hidden: { opacity: 0, y: 20 },
@@ -53,20 +44,15 @@ const Post = ({ post, index }) => {
     }
   };
 
-  const likeAnimation = {
-    scale: [1, 1.3, 1],
-    rotate: [0, -15, 15, -15, 0],
-    transition: { duration: 0.5 }
-  };
-
   const iconAnimation = {
     hover: { scale: 1.1, rotate: 5 },
     tap: { scale: 0.95 }
   };
 
-  const imageZoomVariants = {
-    normal: { scale: 1 },
-    zoomed: { scale: 1.05 }
+  const likeAnimation = {
+    scale: [1, 1.3, 1],
+    rotate: [0, -15, 15, -15, 0],
+    transition: { duration: 0.5 }
   };
 
   const changeEventHandler = (e) => {
@@ -100,7 +86,7 @@ const Post = ({ post, index }) => {
         toast.success(res.data.message);
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
       toast.error("Failed to update like status");
     }
   };
@@ -127,7 +113,7 @@ const Post = ({ post, index }) => {
         setText("");
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
       toast.error("Failed to add comment");
     }
   };
@@ -143,7 +129,7 @@ const Post = ({ post, index }) => {
         toast.success(res.data.message);
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
       toast.error("Failed to bookmark post");
     }
   };
@@ -159,7 +145,7 @@ const Post = ({ post, index }) => {
         toast.success(res.data.message);
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
       toast.error("Failed to delete post");
     }
   };
@@ -185,110 +171,22 @@ const Post = ({ post, index }) => {
       className="my-8 w-full max-w-xl mx-auto bg-gradient-to-b from-white to-blue-50 rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300 border border-blue-100"
     >
       <div className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-4">
-            <motion.div 
-              whileHover={{ scale: 1.1 }} 
-              transition={{ duration: 0.2 }}
-              className="relative"
-            >
-              <Avatar className="h-12 w-12 ring-2 ring-blue-200 ring-offset-2 cursor-pointer">
-                <AvatarImage src={post.author?.profilePicture} alt="profile" />
-                <AvatarFallback className="bg-blue-100 text-blue-600 text-lg">
-                  {post.author?.username?.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <motion.div
-                className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white"
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-              />
-            </motion.div>
-            <div>
-              <h1 className="font-semibold text-gray-800 hover:text-blue-600 transition-colors text-lg">
-                {post.author?.username}
-              </h1>
-              <div className="flex items-center gap-2">
-                <AnimatePresence>
-                  {user?._id === post.author._id && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                    >
-                      <Badge variant="secondary" className="bg-blue-100 text-blue-600">
-                        Author
-                      </Badge>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <span className="text-xs text-gray-500">
-                  {formatDate(post.createdAt)}
-                </span>
-              </div>
-            </div>
-          </div>
-          <Dialog>
-            <DialogTrigger asChild>
-              <motion.div
-                whileHover={{ rotate: 90 }}
-                transition={{ duration: 0.3 }}
-              >
-                <MoreHorizontal className="cursor-pointer text-gray-600 hover:text-blue-600" />
-              </motion.div>
-            </DialogTrigger>
-            <DialogContent className="flex flex-col items-center gap-2 p-4 bg-white/90 backdrop-blur-sm">
-              {post?.author?._id !== user?._id && (
-                <Button
-                  variant="ghost"
-                  className="w-full text-red-500 font-semibold hover:bg-red-50"
-                >
-                  Unfollow
-                </Button>
-              )}
-              <Button variant="ghost" className="w-full hover:bg-blue-50 text-blue-600">
-                Add to favorites
-              </Button>
-              {user?._id === post?.author._id && (
-                <Button
-                  onClick={deletePostHandler}
-                  variant="ghost"
-                  className="w-full text-red-500 hover:bg-red-50"
-                >
-                  Delete
-                </Button>
-              )}
-            </DialogContent>
-          </Dialog>
-        </div>
+        <PostHeader
+          author={post.author}
+          currentUserId={user._id}
+          createdAt={post.createdAt}
+          onDelete={deletePostHandler}
+        />
 
         <motion.div
-          variants={imageZoomVariants}
-          animate={isMediaZoomed ? "zoomed" : "normal"}
-          whileHover="zoomed"
           onHoverStart={() => setIsMediaZoomed(true)}
           onHoverEnd={() => setIsMediaZoomed(false)}
           className="relative rounded-xl overflow-hidden shadow-inner mb-4"
         >
-          {post?.mediaType === 'video' ? (
-            <video
-              className="w-full aspect-video object-cover"
-              src={post.video}
-              controls
-              preload="metadata"
-            />
-          ) : (
-            <img
-              className="w-full aspect-square object-cover transition-transform duration-300"
-              src={post.image}
-              alt="post content"
-              loading="lazy"
-            />
-          )}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: isMediaZoomed ? 1 : 0 }}
-            className="absolute inset-0 bg-black/10"
+          <PostMedia
+            mediaType={post.mediaType}
+            url={post.mediaType === 'video' ? post.video : post.image}
+            isMediaZoomed={isMediaZoomed}
           />
         </motion.div>
 
@@ -387,23 +285,21 @@ const Post = ({ post, index }) => {
             onChange={changeEventHandler}
             className="flex-1 outline-none text-sm bg-white/50 rounded-full px-4 py-3 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all placeholder:text-gray-400"
           />
-          <AnimatePresence>
-            {text && (
-              <motion.button
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={commentHandler}
-                className="bg-blue-600 text-white px-4 py-2 rounded-full font-medium text-sm hover:bg-blue-700 transition-colors"
-              >
-                Post
-              </motion.button>
-            )}
-          </AnimatePresence>
+          {text && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={commentHandler}
+              className="bg-blue-600 text-white px-4 py-2 rounded-full font-medium text-sm hover:bg-blue-700 transition-colors"
+            >
+              Post
+            </motion.button>
+          )}
         </motion.div>
-        </div>
+      </div>
       <CommentDialog open={open} setOpen={setOpen} />
     </motion.div>
   );

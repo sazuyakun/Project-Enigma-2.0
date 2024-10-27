@@ -7,6 +7,69 @@ import { Post } from "../models/post.model.js";
 import { generateOTP, getOTPExpiry, sendOTPEmail } from "../utils/email.js";
 import requestIp from "request-ip";
 import axios from "axios";
+import crypto from "crypto";
+import UAParser from "ua-parser-js";
+import { Flag } from "../models/flag.model.js";
+
+async function checkIPReputation(ip) {
+  try {
+    // Skip check for localhost/development
+    if (ip === "127.0.0.1" || ip === "::1") {
+      return { risk: "low", score: 0 };
+    }
+
+    // Using AbuseIPDB API for IP reputation check
+    const response = await axios.get("https://api.abuseipdb.com/api/v2/check", {
+      params: {
+        ipAddress: ip,
+        maxAgeInDays: 90,
+      },
+      headers: {
+        Key: "a21c00301d5f7f86b7542f1128d72486516c6126bf5a322543ff8cf9dcba1ffde57d19b25add30f5", // Replace with your API key
+        Accept: "application/json",
+      },
+    });
+
+    const data = response.data.data;
+    const abuseScore = data.abuseConfidenceScore;
+
+    // Calculate risk level based on abuse score
+    let risk = "low";
+    if (abuseScore > 80) {
+      risk = "high";
+    } else if (abuseScore > 40) {
+      risk = "medium";
+    }
+
+    return {
+      risk,
+      score: abuseScore,
+    };
+  } catch (error) {
+    console.error("IP reputation check error:", error);
+    // Default to medium risk if the check fails
+    return { risk: "medium", score: 50 };
+  }
+}
+
+function generateDeviceFingerprint(req) {
+  const ua = new UAParser(req.headers["user-agent"]);
+  const deviceInfo = {
+    browser: ua.getBrowser(),
+    os: ua.getOS(),
+    device: ua.getDevice(),
+    screenResolution: req.headers["sec-ch-viewport-width"]
+      ? `${req.headers["sec-ch-viewport-width"]}x${req.headers["sec-ch-viewport-height"]}`
+      : "unknown",
+    timezone: req.headers["time-zone"] || "unknown",
+    language: req.headers["accept-language"] || "unknown",
+    platform: ua.getEngine().name || "unknown",
+  };
+
+  // Create a unique device identifier
+  const deviceString = JSON.stringify(deviceInfo);
+  return crypto.createHash("sha256").update(deviceString).digest("hex");
+}
 
 async function fetchGeolocation(ip) {
   try {
@@ -34,6 +97,8 @@ async function fetchGeolocation(ip) {
 export const register = async (req, res) => {
   try {
     const { name, username, email, password } = req.body;
+
+    // Input validation
     if (!name || !username || !email || !password) {
       return res.status(401).json({
         message: "Something is missing, please check!",
@@ -41,6 +106,7 @@ export const register = async (req, res) => {
       });
     }
 
+    // Check existing user
     const existingUser = await User.findOne({ $or: [{ email }, { username }] });
     if (existingUser) {
       return res.status(401).json({
@@ -52,15 +118,29 @@ export const register = async (req, res) => {
       });
     }
 
+    // Get user information
     const userIP = requestIp.getClientIp(req);
     const geoLocation = await fetchGeolocation(userIP);
+    const IPReputation = await checkIPReputation(userIP);
+    const deviceFingerPrint = generateDeviceFingerprint(req);
+
+    // Generate OTP and hash password
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Create initial Flag document
+    const newFlag = new Flag({
+      flaggedWords: [],
+      positiveCount: 0,
+      negativeCount: 0,
+    });
+    const savedFlag = await newFlag.save();
+
+    // Create user with the flag reference
     const newUser = await User.create({
-      username,
       name,
+      username,
       email,
       password: hashedPassword,
       isMFAEnabled: true,
@@ -71,9 +151,12 @@ export const register = async (req, res) => {
       lastLoginLocation: geoLocation,
       isFlag: false,
       flagAddedAt: null,
-      flaggedWords: []
+      flagged: savedFlag._id, // Use the Flag document's ID instead of empty object
+      IPReputation: IPReputation,
+      deviceFingerPrint: deviceFingerPrint,
     });
 
+    // Send OTP email
     await sendOTPEmail(email, otp);
 
     return res.status(201).json({
@@ -83,7 +166,24 @@ export const register = async (req, res) => {
       success: true,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Registration error:", error);
+
+    // More detailed error handling
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        message: "Invalid input data",
+        errors: Object.values(error.errors).map((err) => err.message),
+        success: false,
+      });
+    }
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: "Duplicate key error",
+        success: false,
+      });
+    }
+
     return res.status(500).json({
       message: "Error registering user",
       success: false,
@@ -178,6 +278,29 @@ export const login = async (req, res) => {
     const userIP = requestIp.getClientIp(req);
     const geoLocation = await fetchGeolocation(userIP);
 
+    // Get VPN status from the middleware
+    const vpnStatus = req.vpnStatus || { isVpn: false };
+
+    // Update user's VPN history and current status
+    user.vpnHistory.push({
+      isVpn: vpnStatus.isVpn,
+      vpnProvider: vpnStatus.provider,
+      confidenceScore: vpnStatus.confidence,
+      ip: userIP,
+      location: {
+        city: geoLocation.place,
+        region: geoLocation.latitude,
+        country: geoLocation.longitude,
+      },
+    });
+
+    user.currentVpnStatus = {
+      isVpn: vpnStatus.isVpn,
+      vpnProvider: vpnStatus.provider,
+      detectedAt: new Date(),
+      confidenceScore: vpnStatus.confidence,
+    };
+
     if (user.isMFAEnabled) {
       const otp = generateOTP();
       const otpExpiry = getOTPExpiry();
@@ -195,6 +318,7 @@ export const login = async (req, res) => {
         message: "OTP sent to your email",
         userId: user._id.toString(),
         requiresOTP: true,
+        vpnDetected: vpnStatus.isVpn,
         success: true,
       });
     }
@@ -218,6 +342,7 @@ export const login = async (req, res) => {
       .json({
         message: `Welcome back ${user.username}`,
         success: true,
+        vpnDetected: vpnStatus.isVpn,
         user: {
           _id: user._id,
           username: user.username,
@@ -227,6 +352,7 @@ export const login = async (req, res) => {
           followers: user.followers,
           following: user.following,
           posts: user.posts,
+          currentVpnStatus: user.currentVpnStatus,
         },
       });
   } catch (error) {
@@ -237,7 +363,6 @@ export const login = async (req, res) => {
     });
   }
 };
-
 export const verifyLoginOTP = async (req, res) => {
   try {
     const { userId, otp } = req.body;

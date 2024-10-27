@@ -13,7 +13,7 @@ load_dotenv()
 def make_csv(datafile_path, users_collection):
     coordinates = []
     for user in users_collection.find():
-        coordinates.append([user["location"]["latitude"], user["location"]["longitude"]])
+        coordinates.append([user["lastLoginLocation"]["latitude"], user["lastLoginLocation"]["longitude"]])
 
     # Sample 2D array
     data = coordinates
